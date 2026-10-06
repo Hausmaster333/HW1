@@ -16,6 +16,16 @@ struct TrackedObject {
 
 int TrackedObject::alive = 0;
 
+struct CycleNode {
+    static int alive;
+    ShrdPtr<CycleNode> next;
+
+    CycleNode() { alive++; }
+    ~CycleNode() { alive--; }
+};
+
+int CycleNode::alive = 0;
+
 struct FirstBase {
     int first = 10;
 };
@@ -90,6 +100,7 @@ struct MoveOnlyArrayElement {
     MoveOnlyArrayElement& operator=(const MoveOnlyArrayElement&) = delete;
 };
 
+// Во время компиляции проверяем запреты копирования и небезопасных преобразований владения.
 static_assert(!std::is_copy_constructible<UnqPtr<int>>::value, "UnqPtr must be move-only");
 static_assert(!std::is_copy_assignable<UnqPtr<int>>::value, "UnqPtr must be move-only");
 static_assert(!std::is_constructible<UnqPtr<Child>, UnqPtr<SecondBase>&&>::value, "Downcast must be rejected");
@@ -101,6 +112,7 @@ static_assert(std::is_constructible<ShrdPtr<SecondBase>, UnqPtr<Child>&&>::value
 static_assert(!std::is_constructible<ShrdPtr<Child>, UnqPtr<SecondBase>&&>::value, "Downcast must be rejected");
 static_assert(!std::is_constructible<UnqPtr<int>, ShrdPtr<int>&&>::value, "Moving ShrdPtr must not silently create UnqPtr");
 
+// Пустой UnqPtr, передача владения и самоперемещение оставляют указатель в корректном состоянии.
 TEST(UnqPtrTest, EmptyAndMove) {
     UnqPtr<int> empty;
     EXPECT_FALSE(empty);
@@ -119,6 +131,7 @@ TEST(UnqPtrTest, EmptyAndMove) {
     EXPECT_EQ(*copy, 5);
 }
 
+// clone() создаёт отдельный объект: изменение и удаление копии не затрагивают оригинал.
 TEST(UnqPtrTest, CloneIsIndependent) {
     EXPECT_EQ(TrackedObject::alive, 0);
     auto owner = UnqPtr<TrackedObject>::make(10);
@@ -136,6 +149,7 @@ TEST(UnqPtrTest, CloneIsIndependent) {
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
+// Некопируемым объектом можно владеть, но попытка clone() должна бросить исключение.
 TEST(UnqPtrTest, MoveOnlyObjectCanBeOwnedButNotCloned) {
     auto owner = UnqPtr<MoveOnlyObject>::make(13);
     EXPECT_EQ(owner->value, 13);
@@ -143,6 +157,7 @@ TEST(UnqPtrTest, MoveOnlyObjectCanBeOwnedButNotCloned) {
     EXPECT_EQ(owner->value, 13);
 }
 
+// Копии ShrdPtr удерживают один объект, который удаляется только последним владельцем.
 TEST(ShrdPtrTest, CopiesShareOneObject) {
     EXPECT_EQ(TrackedObject::alive, 0);
     auto first = ShrdPtr<TrackedObject>::make(1);
@@ -159,6 +174,7 @@ TEST(ShrdPtrTest, CopiesShareOneObject) {
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
+// Передача UnqPtr в ShrdPtr сохраняет адрес объекта и опустошает прежнего владельца.
 TEST(ShrdPtrTest, TakesOwnershipFromUnqPtr) {
     EXPECT_EQ(TrackedObject::alive, 0);
     auto unique = UnqPtr<TrackedObject>::make(17);
@@ -177,6 +193,7 @@ TEST(ShrdPtrTest, TakesOwnershipFromUnqPtr) {
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
+// Передача производного объекта в ShrdPtr базового типа сохраняет адрес базовой части и правильное удаление.
 TEST(ShrdPtrTest, TransferPreservesDerivedDeleterAndBaseAddress) {
     Child::destroyed = 0;
     auto child = UnqPtr<Child>::make();
@@ -198,6 +215,7 @@ TEST(ShrdPtrTest, TransferPreservesDerivedDeleterAndBaseAddress) {
     EXPECT_EQ(Child::destroyed, 2);
 }
 
+// Замена объекта в одном ShrdPtr не удаляет старый объект, пока его удерживает другой владелец.
 TEST(ShrdPtrTest, AssignmentKeepsOldObjectForOtherOwners) {
     EXPECT_EQ(TrackedObject::alive, 0);
     auto first = ShrdPtr<TrackedObject>::make(1);
@@ -214,6 +232,7 @@ TEST(ShrdPtrTest, AssignmentKeepsOldObjectForOtherOwners) {
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
+// Перемещение ShrdPtr опустошает источник, но не добавляет нового владельца в счётчик.
 TEST(ShrdPtrTest, MoveDoesNotChangeUseCount) {
     auto first = ShrdPtr<int>::make(11);
     auto second = first;
@@ -226,6 +245,7 @@ TEST(ShrdPtrTest, MoveDoesNotChangeUseCount) {
     EXPECT_EQ(second.use_count(), 1u);
 }
 
+// Копирующее присваивание освобождает прежний объект назначения и присоединяется к новому владению.
 TEST(ShrdPtrTest, AssignmentReleasesPreviousObject) {
     EXPECT_EQ(TrackedObject::alive, 0);
     auto first = ShrdPtr<TrackedObject>::make(1);
@@ -242,6 +262,7 @@ TEST(ShrdPtrTest, AssignmentReleasesPreviousObject) {
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
+// После Child -> Base клонирование запрещено, а удаление всё равно вызывает деструктор Child.
 TEST(UnqPtrTest, CloneAfterUpcastIsRejectedWithoutSlicing) {
     Child::copies = 0;
     Child::destroyed = 0;
@@ -258,6 +279,7 @@ TEST(UnqPtrTest, CloneAfterUpcastIsRejectedWithoutSlicing) {
     EXPECT_EQ(Child::destroyed, 1);
 }
 
+// ShrdPtr базового типа получает правильный адрес при множественном наследовании и общий счётчик.
 TEST(ShrdPtrTest, UpcastAdjustsAddressAndSharesOwnership) {
     Child::destroyed = 0;
     auto child = ShrdPtr<Child>::make();
@@ -276,6 +298,7 @@ TEST(ShrdPtrTest, UpcastAdjustsAddressAndSharesOwnership) {
     EXPECT_EQ(Child::destroyed, 1);
 }
 
+// Исключение копирующего конструктора при clone() не уничтожает и не опустошает оригинал.
 TEST(UnqPtrTest, FailedCloneKeepsOriginal) {
     EXPECT_EQ(ThrowOnCopy::alive, 0);
     auto owner = UnqPtr<ThrowOnCopy>::make();
@@ -286,6 +309,7 @@ TEST(UnqPtrTest, FailedCloneKeepsOriginal) {
     EXPECT_EQ(ThrowOnCopy::alive, 0);
 }
 
+// Клонирование массива создаёт независимые элементы и освобождает каждый из двух массивов отдельно.
 TEST(UnqPtrArrayTest, CloneIsIndependent) {
     EXPECT_EQ(ArrayElement::alive, 0);
     auto owner = UnqPtr<ArrayElement[]>::make_array(3);
@@ -304,6 +328,7 @@ TEST(UnqPtrArrayTest, CloneIsIndependent) {
     EXPECT_EQ(ArrayElement::alive, 0);
 }
 
+// Общий массив живёт до последнего ShrdPtr, а обращение за его границы бросает исключение.
 TEST(ShrdPtrArrayTest, LastOwnerDeletesArray) {
     EXPECT_EQ(ArrayElement::alive, 0);
     auto first = ShrdPtr<ArrayElement[]>::make_array(3);
@@ -320,6 +345,7 @@ TEST(ShrdPtrArrayTest, LastOwnerDeletesArray) {
     EXPECT_EQ(ArrayElement::alive, 0);
 }
 
+// Передача unique-массива в shared сохраняет адрес, длину и значения без копирования элементов.
 TEST(ShrdPtrArrayTest, TakesOwnershipFromUnqPtr) {
     EXPECT_EQ(ArrayElement::alive, 0);
     auto unique = UnqPtr<ArrayElement[]>::make_array(3);
@@ -336,6 +362,7 @@ TEST(ShrdPtrArrayTest, TakesOwnershipFromUnqPtr) {
     EXPECT_EQ(ArrayElement::alive, 0);
 }
 
+// Если присваивание элемента при clone() бросает, временный массив удаляется, а оригинал остаётся.
 TEST(UnqPtrArrayTest, FailedCloneDestroysPartialCopy) {
     EXPECT_EQ(ThrowArrayElement::alive, 0);
     ThrowArrayElement::assignments = 0;
@@ -347,6 +374,7 @@ TEST(UnqPtrArrayTest, FailedCloneDestroysPartialCopy) {
     EXPECT_EQ(ThrowArrayElement::alive, 0);
 }
 
+// Массив нулевой длины пуст, не допускает индексирование и остаётся пустым при передаче владения.
 TEST(UnqPtrArrayTest, EmptyArray) {
     auto owner = UnqPtr<int[]>::make_array(0);
     EXPECT_FALSE(owner);
@@ -361,9 +389,56 @@ TEST(UnqPtrArrayTest, EmptyArray) {
     EXPECT_EQ(moved.use_count(), 0u);
 }
 
+// Массив некопируемых элементов можно создать, но clone() не должен пытаться копировать их.
 TEST(UnqPtrArrayTest, MoveOnlyElementsCanBeOwnedButNotCloned) {
     auto owner = UnqPtr<MoveOnlyArrayElement[]>::make_array(2);
     owner[1].value = 19;
     EXPECT_THROW(owner.clone(), std::logic_error);
     EXPECT_EQ(owner[1].value, 19);
+}
+
+// Сильная ссылка на себя удерживает объект после ухода внешнего владельца; явный разрыв освобождает его.
+TEST(ShrdPtrTest, SelfReferenceKeepsObjectAliveUntilBroken) {
+    EXPECT_EQ(CycleNode::alive, 0);
+    auto owner = ShrdPtr<CycleNode>::make();
+    owner->next = owner;
+    EXPECT_EQ(owner.use_count(), 2u);
+
+    CycleNode* address = owner.get();
+    owner.reset();
+    ASSERT_EQ(CycleNode::alive, 1);
+    EXPECT_EQ(address->next.use_count(), 1u);
+
+    // Объект пока жив благодаря циклу; временный владелец позволяет безопасно разорвать связь.
+    auto remaining_owner = address->next;
+    remaining_owner->next.reset();
+    EXPECT_EQ(remaining_owner.use_count(), 1u);
+    EXPECT_EQ(CycleNode::alive, 1);
+    remaining_owner.reset();
+    EXPECT_EQ(CycleNode::alive, 0);
+}
+
+// Два объекта с сильными ссылками друг на друга остаются живыми без внешних владельцев до разрыва цикла.
+TEST(ShrdPtrTest, OwnershipCycleKeepsObjectsAliveUntilBroken) {
+    EXPECT_EQ(CycleNode::alive, 0);
+    auto first = ShrdPtr<CycleNode>::make();
+    auto second = ShrdPtr<CycleNode>::make();
+    first->next = second;
+    second->next = first;
+    EXPECT_EQ(first.use_count(), 2u);
+    EXPECT_EQ(second.use_count(), 2u);
+
+    CycleNode* address = first.get();
+    first.reset();
+    second.reset();
+    ASSERT_EQ(CycleNode::alive, 2);
+    EXPECT_EQ(address->next.use_count(), 1u);
+
+    auto remaining_owner = address->next;
+    remaining_owner->next.reset();
+    EXPECT_EQ(CycleNode::alive, 1);
+    EXPECT_FALSE(remaining_owner->next);
+    EXPECT_EQ(remaining_owner.use_count(), 1u);
+    remaining_owner.reset();
+    EXPECT_EQ(CycleNode::alive, 0);
 }

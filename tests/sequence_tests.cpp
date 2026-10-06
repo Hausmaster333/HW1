@@ -35,6 +35,7 @@ Counted fail_on_two(const Counted& item) {
     return item;
 }
 
+// Во время компиляции проверяем типы результатов Mutable/Immutable и типы размеров контейнеров.
 static_assert(std::is_same<decltype(std::declval<MutableArraySequence<int>&>().append(1)),
                            MutableArraySequence<int>&>::value,
               "Mutable append must return a reference");
@@ -46,6 +47,7 @@ static_assert(std::is_same<decltype(std::declval<LinkedList<int>&>().get_length(
 static_assert(std::is_same<decltype(std::declval<DynamicArray<int>&>().get_size()), size_t>::value,
               "Array size must use size_t");
 
+// Копия массива имеет собственный буфер; её изменение и расширение не затрагивают оригинал.
 TEST(DynamicArrayTest, CopyAndResizeAreIndependent) {
     int items[] = {1, 2, 3};
     DynamicArray<int> original(items, 3);
@@ -60,6 +62,7 @@ TEST(DynamicArrayTest, CopyAndResizeAreIndependent) {
     EXPECT_EQ(original.get_size(), 3u);
 }
 
+// После конца массива перечислитель остаётся завершённым и не выдаёт последний элемент повторно.
 TEST(DynamicArrayTest, EnumeratorDoesNotRestartAfterEnd) {
     int items[] = {5};
     DynamicArray<int> array(items, 1);
@@ -72,6 +75,7 @@ TEST(DynamicArrayTest, EnumeratorDoesNotRestartAfterEnd) {
     EXPECT_THROW(iter->get_current(), std::out_of_range);
 }
 
+// try_get* работают с типом без конструктора по умолчанию и возвращают отсутствие вне границ.
 TEST(SequenceListTest, TryGetWorksWithDeletedDefaultConstructor) {
     MutableListSequence<NoDefault> sequence;
     EXPECT_FALSE(sequence.try_get_first().has_value());
@@ -85,6 +89,7 @@ TEST(SequenceListTest, TryGetWorksWithDeletedDefaultConstructor) {
     EXPECT_FALSE(sequence.try_get(1).has_value());
 }
 
+// try_get* массива возвращают значение для существующего элемента и пустой optional при его отсутствии.
 TEST(SequenceArrayTest, TryGetReturnsEmptyOutsideBounds) {
     MutableArraySequence<int> sequence;
     EXPECT_FALSE(sequence.try_get_first().has_value());
@@ -98,6 +103,7 @@ TEST(SequenceArrayTest, TryGetReturnsEmptyOutsideBounds) {
     EXPECT_FALSE(sequence.try_get(1).has_value());
 }
 
+// Mutable-вставки меняют исходный массив, возвращают его же и проверяют границы индекса.
 TEST(SequenceArrayTest, MutableOperationsKeepSameObject) {
     MutableArraySequence<int> sequence;
     auto* address = &sequence;
@@ -115,6 +121,7 @@ TEST(SequenceArrayTest, MutableOperationsKeepSameObject) {
     EXPECT_THROW(sequence.insert_at(5, 6), std::out_of_range);
 }
 
+// Immutable-вставки создают новые последовательности, не меняя исходные элементы и длину.
 TEST(SequenceArrayTest, ImmutableOperationsCreateNewObject) {
     int items[] = {1, 3};
     ImmutableArraySequence<int> original(items, 2);
@@ -129,6 +136,7 @@ TEST(SequenceArrayTest, ImmutableOperationsCreateNewObject) {
     EXPECT_NE(added.get(), &original);
 }
 
+// Вставка значения из самого массива безопасна даже при перевыделении буфера и сдвигах элементов.
 TEST(SequenceArrayTest, InsertingOwnElementSurvivesResizeAndShifting) {
     int items[] = {1, 2, 3, 4};
     MutableArraySequence<int> sequence(items, 4);
@@ -141,6 +149,7 @@ TEST(SequenceArrayTest, InsertingOwnElementSurvivesResizeAndShifting) {
     EXPECT_EQ(sequence.get(1), 1);
 }
 
+// map, where, поддиапазон, concat и slice создают владеющие результаты; reduce учитывает начальное значение.
 TEST(SequenceArrayTest, ProducingOperationsOwnTheirResults) {
     int items[] = {1, 2, 3, 4};
     MutableArraySequence<int> sequence(items, 4);
@@ -164,6 +173,7 @@ TEST(SequenceArrayTest, ProducingOperationsOwnTheirResults) {
     EXPECT_EQ(sequence.get_count(), 4u);
 }
 
+// Mutable-список меняется на месте, а Immutable-список сохраняет каждую прежнюю версию.
 TEST(SequenceListTest, MutableAndImmutableOperations) {
     MutableListSequence<int> mutable_list;
     mutable_list.append(2).prepend(1).insert_at(3, 2);
@@ -179,6 +189,7 @@ TEST(SequenceListTest, MutableAndImmutableOperations) {
     EXPECT_EQ(second->get_last(), 2);
 }
 
+// Wrapper не перезапускает завершённый обход списка; reset() явно возвращает его к началу.
 TEST(SequenceListTest, EnumeratorCanResetAndStaysExhausted) {
     int items[] = {5, 6};
     MutableListSequence<int> sequence(items, 2);
@@ -197,6 +208,7 @@ TEST(SequenceListTest, EnumeratorCanResetAndStaysExhausted) {
     EXPECT_EQ(iter.get_current(), 5);
 }
 
+// Перечислитель списка бросает после изменения или уничтожения владельца вместо чтения старых узлов.
 TEST(SequenceListTest, EnumeratorDetectsMutationAndOwnerDestruction) {
     UnqPtr<IEnumerator<int>> after_death;
     {
@@ -213,6 +225,7 @@ TEST(SequenceListTest, EnumeratorDetectsMutationAndOwnerDestruction) {
     EXPECT_THROW(after_death->move_next(), std::logic_error);
 }
 
+// Перемещение списка переносит узлы, но инвалидирует перечислитель исходного владельца.
 TEST(SequenceListTest, EnumeratorDetectsOwnerMove) {
     int items[] = {1, 2};
     LinkedList<int> source(items, 2);
@@ -223,6 +236,7 @@ TEST(SequenceListTest, EnumeratorDetectsOwnerMove) {
     EXPECT_THROW(iter->move_next(), std::logic_error);
 }
 
+// clear() инвалидирует обход, сбрасывает хвост и позволяет снова добавлять элементы в пустой список.
 TEST(SequenceListTest, ClearInvalidatesEnumeratorAndResetsTail) {
     int items[] = {1, 2};
     LinkedList<int> list(items, 2);
@@ -238,6 +252,7 @@ TEST(SequenceListTest, ClearInvalidatesEnumeratorAndResetsTail) {
     EXPECT_EQ(list.get_last(), 3);
 }
 
+// Изменение массива или уничтожение владельца инвалидирует перечислитель до обращения к данным.
 TEST(SequenceArrayTest, EnumeratorDetectsResizeAndOwnerDestruction) {
     UnqPtr<IEnumerator<int>> after_death;
     {
@@ -253,6 +268,7 @@ TEST(SequenceArrayTest, EnumeratorDetectsResizeAndOwnerDestruction) {
     EXPECT_THROW(after_death->move_next(), std::logic_error);
 }
 
+// Clone() и map() списка создают независимые результаты, не растущие вместе с оригиналом.
 TEST(SequenceListTest, CopyAndMapResultAreIndependent) {
     int items[] = {1, 2, 3};
     MutableListSequence<int> original(items, 3);
@@ -266,6 +282,7 @@ TEST(SequenceListTest, CopyAndMapResultAreIndependent) {
     EXPECT_EQ(original.get_count(), 4u);
 }
 
+// Исключение внутри map() освобождает частично построенный результат и сохраняет исходный список.
 TEST(SequenceListTest, FailedMapReleasesPartialResult) {
     EXPECT_EQ(Counted::alive, 0);
     Counted items[] = {Counted(1), Counted(2)};
@@ -278,6 +295,7 @@ TEST(SequenceListTest, FailedMapReleasesPartialResult) {
     EXPECT_EQ(sequence.get_first().value, 1);
 }
 
+// Деструктор освобождает 50 000 узлов без рекурсивного обхода и уничтожает все отслеживаемые элементы.
 TEST(SequenceListTest, LongListIsReleasedIteratively) {
     {
         LinkedList<int> list;
@@ -296,6 +314,7 @@ TEST(SequenceListTest, LongListIsReleasedIteratively) {
     EXPECT_EQ(Counted::alive, 0);
 }
 
+// Проверяем nullptr, неверные индексы и размеры, отрицательную длину slice и допустимый индекс -1.
 TEST(SequenceTest, InvalidArguments) {
     MutableArraySequence<int> sequence;
     EXPECT_THROW(sequence.map(nullptr), std::invalid_argument);
