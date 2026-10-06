@@ -4,7 +4,7 @@
 
 template <class T>
 LinkedList<T>::LinkedList()
-    : tail(nullptr), length(0), iterator_state(UnqPtr<IteratorState>::make()) {}
+    : tail(nullptr), length(0), iterator_state(ShrdPtr<IteratorState>::make()) {}
 
 template <class T>
 LinkedList<T>::LinkedList(const T* items, size_t count) : LinkedList() {
@@ -36,7 +36,7 @@ LinkedList<T>::LinkedList(const LinkedList<T>& other) : LinkedList() {
 }
 
 template <class T>
-LinkedList<T>::LinkedList(LinkedList<T>&& other) noexcept : LinkedList() {
+LinkedList<T>::LinkedList(LinkedList<T>&& other) : LinkedList() {
     swap(other);
 }
 
@@ -147,7 +147,7 @@ void LinkedList<T>::swap(LinkedList<T>& other) noexcept {
 
 template <class T>
 UnqPtr<IEnumerator<T>> LinkedList<T>::get_enumerator() const {
-    return UnqPtr<Enumerator>::make(head.get(), iterator_state.share());
+    return UnqPtr<Enumerator>::make(head.get(), iterator_state);
 }
 
 template <class T>

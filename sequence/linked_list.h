@@ -19,12 +19,12 @@ class LinkedList {
         UnqPtr<Node> head;
         Node* tail;
         size_t length;
-        UnqPtr<IteratorState> iterator_state;
+        ShrdPtr<IteratorState> iterator_state;
     public:
         LinkedList();
         LinkedList(const T* items, size_t count);
         LinkedList(const LinkedList<T>& other);
-        LinkedList(LinkedList<T>&& other) noexcept;
+        LinkedList(LinkedList<T>&& other);
         LinkedList<T>& operator=(const LinkedList<T>& other);
         LinkedList<T>& operator=(LinkedList<T>&& other) noexcept;
 

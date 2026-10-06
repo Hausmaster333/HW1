@@ -4,11 +4,11 @@
 #include <utility>
 
 template <class T>
-DynamicArray<T>::DynamicArray() : size(0), iterator_state(UnqPtr<IteratorState>::make()) {}
+DynamicArray<T>::DynamicArray() : size(0), iterator_state(ShrdPtr<IteratorState>::make()) {}
 
 template <class T>
 DynamicArray<T>::DynamicArray(size_t size)
-    : size(size), iterator_state(UnqPtr<IteratorState>::make()) {
+    : size(size), iterator_state(ShrdPtr<IteratorState>::make()) {
     if (size > static_cast<size_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
         throw std::length_error("Size is too large");
     }
@@ -86,5 +86,5 @@ UnqPtr<IEnumerator<T>> DynamicArray<T>::get_enumerator() const {
 template <class T>
 UnqPtr<IEnumerator<T>> DynamicArray<T>::get_enumerator(size_t count) const {
     if (count > size) throw std::out_of_range("Enumerator count out of range");
-    return UnqPtr<Enumerator>::make(data.get(), count, iterator_state.share());
+    return UnqPtr<Enumerator>::make(data.get(), count, iterator_state);
 }

@@ -23,8 +23,7 @@ class Sequence {
         UnqPtr<Sequence<T>> map(T (*func)(const T& elem)) const;
         UnqPtr<Sequence<T>> where(bool (*predicate)(const T& elem)) const;
         T reduce(T (*func)(const T& accumulator, const T& current), const T& initial_elem) const;
-        UnqPtr<Sequence<T>> slice(std::ptrdiff_t index, std::ptrdiff_t count,
-                                   const Sequence<T>* replace_seq = nullptr) const;
+        UnqPtr<Sequence<T>> slice(std::ptrdiff_t index, std::ptrdiff_t count, const Sequence<T>* replace_seq = nullptr) const;
 
         virtual UnqPtr<IEnumerator<T>> get_enumerator() const = 0;
         virtual ~Sequence() = default;

@@ -1,6 +1,7 @@
 #ifndef HW1_IENUMERATOR_H
 #define HW1_IENUMERATOR_H
 
+#include "unq_ptr.h"
 #include "shrd_ptr.h"
 #include <cstddef>
 #include <stdexcept>
@@ -26,8 +27,7 @@ class EnumeratorWrapper {
         UnqPtr<IEnumerator<T>> iter;
         bool has_current;
     public:
-        EnumeratorWrapper(UnqPtr<IEnumerator<T>> iter)
-            : iter(std::move(iter)), has_current(false) {}
+        EnumeratorWrapper(UnqPtr<IEnumerator<T>> iter) : iter(std::move(iter)), has_current(false) {}
 
         bool move_next() {
             has_current = iter->move_next();

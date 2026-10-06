@@ -10,7 +10,7 @@ class DynamicArray {
     private:
         UnqPtr<T[]> data;
         size_t size;
-        UnqPtr<IteratorState> iterator_state;
+        ShrdPtr<IteratorState> iterator_state;
     public:
         DynamicArray();
         DynamicArray(size_t size);

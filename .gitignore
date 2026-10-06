@@ -1,4 +1,7 @@
 *.exe
-decentral_tests
+ptr_tests
 sequence_tests
+benchmark
+benchmarks/results/
+build/valgrind/
 DESIGN.md

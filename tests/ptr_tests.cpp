@@ -92,18 +92,19 @@ struct MoveOnlyArrayElement {
 
 static_assert(!std::is_copy_constructible<UnqPtr<int>>::value, "UnqPtr must be move-only");
 static_assert(!std::is_copy_assignable<UnqPtr<int>>::value, "UnqPtr must be move-only");
-static_assert(!std::is_constructible<UnqPtr<Child>, UnqPtr<SecondBase>&&>::value,
-              "Downcast must be rejected");
-static_assert(!std::is_constructible<UnqPtr<SecondBase[]>, UnqPtr<Child[]>&&>::value,
-              "Arrays must not be covariant");
-static_assert(!std::is_constructible<UnqPtr<int>, int*>::value,
-              "Raw pointer ownership must not be public");
+static_assert(!std::is_constructible<UnqPtr<Child>, UnqPtr<SecondBase>&&>::value, "Downcast must be rejected");
+static_assert(!std::is_constructible<UnqPtr<SecondBase[]>, UnqPtr<Child[]>&&>::value, "Arrays must not be covariant");
+static_assert(!std::is_constructible<UnqPtr<int>, int*>::value, "Raw pointer ownership must not be public");
+static_assert(!std::is_constructible<ShrdPtr<int>, UnqPtr<int>&>::value, "UnqPtr must be moved to transfer ownership");
+static_assert(std::is_constructible<ShrdPtr<int>, UnqPtr<int>&&>::value, "ShrdPtr must accept ownership from UnqPtr");
+static_assert(std::is_constructible<ShrdPtr<SecondBase>, UnqPtr<Child>&&>::value, "Derived object must be transferable to a base pointer");
+static_assert(!std::is_constructible<ShrdPtr<Child>, UnqPtr<SecondBase>&&>::value, "Downcast must be rejected");
+static_assert(!std::is_constructible<UnqPtr<int>, ShrdPtr<int>&&>::value, "Moving ShrdPtr must not silently create UnqPtr");
 
 TEST(UnqPtrTest, EmptyAndMove) {
     UnqPtr<int> empty;
     EXPECT_FALSE(empty);
     EXPECT_EQ(empty.get(), nullptr);
-    EXPECT_EQ(empty.descriptor_count(), 0u);
     EXPECT_THROW(*empty, std::logic_error);
     EXPECT_FALSE(empty.clone());
 
@@ -114,6 +115,8 @@ TEST(UnqPtrTest, EmptyAndMove) {
     UnqPtr<int>* alias = &second;
     second = std::move(*alias);
     EXPECT_EQ(*second, 5);
+    auto copy = second.clone();
+    EXPECT_EQ(*copy, 5);
 }
 
 TEST(UnqPtrTest, CloneIsIndependent) {
@@ -140,74 +143,106 @@ TEST(UnqPtrTest, MoveOnlyObjectCanBeOwnedButNotCloned) {
     EXPECT_EQ(owner->value, 13);
 }
 
-TEST(ShrdPtrTest, DescriptorsOutliveOwner) {
+TEST(ShrdPtrTest, CopiesShareOneObject) {
     EXPECT_EQ(TrackedObject::alive, 0);
-    auto owner = UnqPtr<TrackedObject>::make(1);
-    auto first = owner.share();
+    auto first = ShrdPtr<TrackedObject>::make(1);
     auto second = first;
 
-    EXPECT_EQ(owner.descriptor_count(), 2u);
     EXPECT_EQ(first.use_count(), 2u);
-    owner.reset();
+    EXPECT_EQ(second.use_count(), 2u);
+    first.reset();
     EXPECT_EQ(TrackedObject::alive, 1);
 
-    first->value = 7;
+    second->value = 7;
     EXPECT_EQ(second->value, 7);
-    first.reset();
+    second.reset();
+    EXPECT_EQ(TrackedObject::alive, 0);
+}
+
+TEST(ShrdPtrTest, TakesOwnershipFromUnqPtr) {
+    EXPECT_EQ(TrackedObject::alive, 0);
+    auto unique = UnqPtr<TrackedObject>::make(17);
+    TrackedObject* address = unique.get();
+
+    ShrdPtr<TrackedObject> shared(std::move(unique));
+    EXPECT_FALSE(unique);
+    EXPECT_EQ(shared.get(), address);
+    EXPECT_EQ(shared.use_count(), 1u);
+    EXPECT_EQ(TrackedObject::alive, 1);
+
+    auto second = shared;
+    shared.reset();
     EXPECT_EQ(TrackedObject::alive, 1);
     second.reset();
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
-TEST(ShrdPtrTest, OldDescriptorsStayWithOldObject) {
-    EXPECT_EQ(TrackedObject::alive, 0);
-    auto owner = UnqPtr<TrackedObject>::make(1);
-    auto old = owner.share();
+TEST(ShrdPtrTest, TransferPreservesDerivedDeleterAndBaseAddress) {
+    Child::destroyed = 0;
+    auto child = UnqPtr<Child>::make();
+    SecondBase* address = static_cast<SecondBase*>(child.get());
 
-    owner = UnqPtr<TrackedObject>::make(2);
+    ShrdPtr<SecondBase> shared(std::move(child));
+    EXPECT_FALSE(child);
+    EXPECT_EQ(shared.get(), address);
+    shared.reset();
+    EXPECT_EQ(Child::destroyed, 1);
+
+    auto next_child = UnqPtr<Child>::make();
+    UnqPtr<SecondBase> base(std::move(next_child));
+    address = base.get();
+    ShrdPtr<SecondBase> next_shared(std::move(base));
+    EXPECT_FALSE(base);
+    EXPECT_EQ(next_shared.get(), address);
+    next_shared.reset();
+    EXPECT_EQ(Child::destroyed, 2);
+}
+
+TEST(ShrdPtrTest, AssignmentKeepsOldObjectForOtherOwners) {
+    EXPECT_EQ(TrackedObject::alive, 0);
+    auto first = ShrdPtr<TrackedObject>::make(1);
+    auto old = first;
+
+    first = ShrdPtr<TrackedObject>::make(2);
     EXPECT_EQ(old->value, 1);
-    EXPECT_EQ(owner->value, 2);
+    EXPECT_EQ(first->value, 2);
     EXPECT_EQ(TrackedObject::alive, 2);
 
     old.reset();
     EXPECT_EQ(TrackedObject::alive, 1);
-    owner.reset();
+    first.reset();
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
-TEST(ShrdPtrTest, MoveOwnerDoesNotBreakDescriptors) {
-    auto owner = UnqPtr<int>::make(11);
-    auto descriptor = owner.share();
-    UnqPtr<int> moved = std::move(owner);
+TEST(ShrdPtrTest, MoveDoesNotChangeUseCount) {
+    auto first = ShrdPtr<int>::make(11);
+    auto second = first;
+    ShrdPtr<int> moved = std::move(first);
 
-    EXPECT_FALSE(owner);
-    EXPECT_EQ(moved.descriptor_count(), 1u);
-    EXPECT_EQ(*descriptor, 11);
+    EXPECT_FALSE(first);
+    EXPECT_EQ(moved.use_count(), 2u);
+    EXPECT_EQ(*second, 11);
     moved.reset();
-    EXPECT_EQ(*descriptor, 11);
+    EXPECT_EQ(second.use_count(), 1u);
 }
 
 TEST(ShrdPtrTest, AssignmentReleasesPreviousObject) {
     EXPECT_EQ(TrackedObject::alive, 0);
-    auto first_owner = UnqPtr<TrackedObject>::make(1);
-    auto second_owner = UnqPtr<TrackedObject>::make(2);
-    auto first = first_owner.share();
-    auto second = second_owner.share();
+    auto first = ShrdPtr<TrackedObject>::make(1);
+    auto second = ShrdPtr<TrackedObject>::make(2);
 
     first = second;
     EXPECT_EQ(first->value, 2);
     EXPECT_EQ(second.use_count(), 2u);
-    first_owner.reset();
     EXPECT_EQ(TrackedObject::alive, 1);
 
-    second_owner.reset();
     second.reset();
     EXPECT_EQ(TrackedObject::alive, 1);
     first.reset();
     EXPECT_EQ(TrackedObject::alive, 0);
 }
 
-TEST(UnqPtrTest, CloneAfterUpcastPreservesChild) {
+TEST(UnqPtrTest, CloneAfterUpcastIsRejectedWithoutSlicing) {
     Child::copies = 0;
     Child::destroyed = 0;
     auto child = UnqPtr<Child>::make();
@@ -216,35 +251,28 @@ TEST(UnqPtrTest, CloneAfterUpcastPreservesChild) {
     UnqPtr<SecondBase> base = std::move(child);
     EXPECT_FALSE(child);
     EXPECT_EQ(base.get(), expected);
-    auto copy = base.clone();
-    EXPECT_EQ(Child::copies, 1);
-    EXPECT_NE(copy.get(), base.get());
+    EXPECT_THROW(base.clone(), std::logic_error);
+    EXPECT_EQ(Child::copies, 0);
 
-    copy->second = 99;
-    EXPECT_EQ(base->second, 20);
-    EXPECT_EQ(copy->second, 99);
     base.reset();
-    copy.reset();
-    EXPECT_EQ(Child::destroyed, 2);
+    EXPECT_EQ(Child::destroyed, 1);
 }
 
-TEST(ShrdPtrTest, UpcastAdjustsAddressAndSurvivesOwner) {
+TEST(ShrdPtrTest, UpcastAdjustsAddressAndSharesOwnership) {
     Child::destroyed = 0;
-    auto owner = UnqPtr<Child>::make();
-    SecondBase* expected = static_cast<SecondBase*>(owner.get());
+    auto child = ShrdPtr<Child>::make();
+    SecondBase* expected = static_cast<SecondBase*>(child.get());
 
-    ShrdPtr<SecondBase> base(owner);
-    auto child_descriptor = owner.share();
-    ShrdPtr<SecondBase> second = child_descriptor;
+    ShrdPtr<SecondBase> base(child);
+    ShrdPtr<SecondBase> second = child;
     EXPECT_EQ(base.get(), expected);
     EXPECT_EQ(second.get(), expected);
     EXPECT_EQ(base.use_count(), 3u);
 
-    owner.reset();
+    child.reset();
     EXPECT_EQ(Child::destroyed, 0);
     base.reset();
     second.reset();
-    child_descriptor.reset();
     EXPECT_EQ(Child::destroyed, 1);
 }
 
@@ -258,7 +286,7 @@ TEST(UnqPtrTest, FailedCloneKeepsOriginal) {
     EXPECT_EQ(ThrowOnCopy::alive, 0);
 }
 
-TEST(UnqPtrArrayTest, CloneAndDescriptorLifetime) {
+TEST(UnqPtrArrayTest, CloneIsIndependent) {
     EXPECT_EQ(ArrayElement::alive, 0);
     auto owner = UnqPtr<ArrayElement[]>::make_array(3);
     EXPECT_EQ(ArrayElement::alive, 3);
@@ -270,17 +298,41 @@ TEST(UnqPtrArrayTest, CloneAndDescriptorLifetime) {
     copy[1].value = 7;
     EXPECT_EQ(owner[1].value, 42);
 
-    auto descriptor = owner.share();
-    auto second_descriptor = descriptor;
     owner.reset();
-    EXPECT_EQ(descriptor[1].value, 42);
-    EXPECT_EQ(descriptor.size(), 3u);
-    EXPECT_THROW(descriptor[3], std::out_of_range);
-    descriptor.reset();
-    EXPECT_EQ(ArrayElement::alive, 6);
-    second_descriptor.reset();
     EXPECT_EQ(ArrayElement::alive, 3);
     copy.reset();
+    EXPECT_EQ(ArrayElement::alive, 0);
+}
+
+TEST(ShrdPtrArrayTest, LastOwnerDeletesArray) {
+    EXPECT_EQ(ArrayElement::alive, 0);
+    auto first = ShrdPtr<ArrayElement[]>::make_array(3);
+    first[1].value = 42;
+    auto second = first;
+
+    EXPECT_EQ(first.use_count(), 2u);
+    first.reset();
+    EXPECT_EQ(ArrayElement::alive, 3);
+    EXPECT_EQ(second.size(), 3u);
+    EXPECT_EQ(second[1].value, 42);
+    EXPECT_THROW(second[3], std::out_of_range);
+    second.reset();
+    EXPECT_EQ(ArrayElement::alive, 0);
+}
+
+TEST(ShrdPtrArrayTest, TakesOwnershipFromUnqPtr) {
+    EXPECT_EQ(ArrayElement::alive, 0);
+    auto unique = UnqPtr<ArrayElement[]>::make_array(3);
+    auto* address = unique.get();
+    unique[1].value = 42;
+
+    ShrdPtr<ArrayElement[]> shared(std::move(unique));
+    EXPECT_FALSE(unique);
+    EXPECT_EQ(unique.size(), 0u);
+    EXPECT_EQ(shared.get(), address);
+    EXPECT_EQ(shared.size(), 3u);
+    EXPECT_EQ(shared[1].value, 42);
+    shared.reset();
     EXPECT_EQ(ArrayElement::alive, 0);
 }
 
@@ -300,7 +352,13 @@ TEST(UnqPtrArrayTest, EmptyArray) {
     EXPECT_FALSE(owner);
     EXPECT_EQ(owner.size(), 0u);
     EXPECT_THROW(owner[0], std::out_of_range);
-    EXPECT_FALSE(owner.share());
+    auto shared = ShrdPtr<int[]>::make_array(0);
+    EXPECT_FALSE(shared);
+    EXPECT_EQ(shared.size(), 0u);
+    EXPECT_EQ(shared.use_count(), 0u);
+    ShrdPtr<int[]> moved(std::move(owner));
+    EXPECT_FALSE(moved);
+    EXPECT_EQ(moved.use_count(), 0u);
 }
 
 TEST(UnqPtrArrayTest, MoveOnlyElementsCanBeOwnedButNotCloned) {
