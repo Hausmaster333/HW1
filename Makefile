@@ -1,39 +1,52 @@
-CC = g++
-CFLAGS = -Wall -Wextra -std=c++17 -I.
-GTEST_DIR = googletest/googletest
-GTEST_FLAGS = -I$(GTEST_DIR)/include -I$(GTEST_DIR)
-PTR_FILES = unq_ptr.h unq_ptr.tpp shrd_ptr.h shrd_ptr.tpp
-SEQ_FILES = $(wildcard sequence/*.h sequence/*.tpp)
-VALGRIND_DIR = build/valgrind
-VALGRIND_FLAGS = --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1
+# Windows: mingw32-make, Linux: make
+CXX = g++
+CXXFLAGS = -Wall -Wextra -std=c++17 -I. -g
+GTEST = googletest/googletest
+GTEST_FLAGS = -pthread -I$(GTEST)/include -I$(GTEST)
+
+HEADERS = $(wildcard *.h *.tpp sequence/*.h sequence/*.tpp support/*.h)
+
+ALLOC = support/alloc_counter.cpp
+
 ifeq ($(OS),Windows_NT)
-BENCH_LIBS = -lpsapi
+BUILD = build/windows
+MKDIR = if not exist $(subst /,\,$(BUILD)) mkdir $(subst /,\,$(BUILD)) # из PowerShell рецепты идут через cmd, там нет mkdir -p
+LDFLAGS = -static # иначе из PATH может подхватиться чужая libstdc++-6.dll
+BENCH_LIBS = -lpsapi # замер памяти процесса
+else
+BUILD = build/linux
+MKDIR = mkdir -p $(BUILD)
 endif
 
-ptr_tests: tests/ptr_tests.cpp $(PTR_FILES) $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
-	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/ptr_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o ptr_tests
+TEST_PARTS = tests/leak_check.cpp $(ALLOC) $(BUILD)/gtest-all.o
 
-sequence_tests: tests/sequence_tests.cpp $(PTR_FILES) $(SEQ_FILES) $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
-	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/sequence_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o sequence_tests
+all: ptr_tests sequence_tests benchmark
 
-benchmark: benchmarks/benchmark.cpp $(PTR_FILES)
-	$(CC) $(CFLAGS) -O2 -DNDEBUG benchmarks/benchmark.cpp -o benchmark $(BENCH_LIBS)
+$(BUILD)/gtest-all.o: $(GTEST)/src/gtest-all.cc
+	$(MKDIR)
+	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) -c $< -o $@
 
-$(VALGRIND_DIR):
-	mkdir -p $(VALGRIND_DIR)
+ptr_tests: tests/ptr_tests.cpp $(TEST_PARTS) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) tests/ptr_tests.cpp $(TEST_PARTS) -o $@ $(LDFLAGS)
 
-$(VALGRIND_DIR)/ptr_tests: tests/ptr_tests.cpp $(PTR_FILES) $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc | $(VALGRIND_DIR)
-	$(CC) $(CFLAGS) -g -O0 -pthread $(GTEST_FLAGS) tests/ptr_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o $@
+sequence_tests: tests/sequence_tests.cpp $(TEST_PARTS) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) tests/sequence_tests.cpp $(TEST_PARTS) -o $@ $(LDFLAGS)
 
-$(VALGRIND_DIR)/sequence_tests: tests/sequence_tests.cpp $(PTR_FILES) $(SEQ_FILES) $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc | $(VALGRIND_DIR)
-	$(CC) $(CFLAGS) -g -O0 -pthread $(GTEST_FLAGS) tests/sequence_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o $@
+benchmark: benchmarks/benchmark.cpp $(ALLOC) $(HEADERS)
+	$(CXX) $(CXXFLAGS) -O2 -DNDEBUG -DALLOC_COUNTER_SINGLE_THREAD benchmarks/benchmark.cpp $(ALLOC) -o $@ $(LDFLAGS) $(BENCH_LIBS)
 
-$(VALGRIND_DIR)/benchmark: benchmarks/benchmark.cpp $(PTR_FILES) | $(VALGRIND_DIR)
-	$(CC) $(CFLAGS) -g -O0 benchmarks/benchmark.cpp -o $@
+check: ptr_tests sequence_tests
+	./ptr_tests
+	./sequence_tests
 
-valgrind: $(VALGRIND_DIR)/ptr_tests $(VALGRIND_DIR)/sequence_tests $(VALGRIND_DIR)/benchmark
-	valgrind $(VALGRIND_FLAGS) $(VALGRIND_DIR)/ptr_tests
-	valgrind $(VALGRIND_FLAGS) $(VALGRIND_DIR)/sequence_tests
-	set -e; for scenario in owners clones descriptors; do for variant in raw std custom; do \
-		valgrind $(VALGRIND_FLAGS) $(VALGRIND_DIR)/benchmark $$scenario $$variant 1000; \
-	done; done
+VALGRIND = valgrind --soname-synonyms=somalloc=nouserintercepts --leak-check=full --show-leak-kinds=all \
+           --errors-for-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1
+
+valgrind: ptr_tests sequence_tests
+	$(VALGRIND) ./ptr_tests --gtest_filter=-*ImpossibleSize*:WeakPtrThreadTest.*
+	$(VALGRIND) ./sequence_tests
+
+clean:
+	rm -rf build ptr_tests sequence_tests benchmark *.exe
+
+.PHONY: all check valgrind clean

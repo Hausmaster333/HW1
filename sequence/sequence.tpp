@@ -19,14 +19,12 @@ UnqPtr<Sequence<T>> Sequence<T>::get_sub_sequence(size_t start, size_t end) cons
 }
 
 template <class T>
-UnqPtr<Sequence<T>> Sequence<T>::concat(const Sequence<T>* other) const {
-    if (other == nullptr) throw std::invalid_argument("Cannot concat with nullptr");
-
+UnqPtr<Sequence<T>> Sequence<T>::concat(const Sequence<T>& other) const {
     auto result = CreateEmpty();
     EnumeratorWrapper<T> first(get_enumerator());
     while (first.move_next()) result->sys_append(first.get_current());
 
-    EnumeratorWrapper<T> second(other->get_enumerator());
+    EnumeratorWrapper<T> second(other.get_enumerator());
     while (second.move_next()) result->sys_append(second.get_current());
     return result;
 }
@@ -65,9 +63,15 @@ T Sequence<T>::reduce(T (*func)(const T& accumulator, const T& current),
     return result;
 }
 
+// Без замены - то же, что замена пустой последовательностью
+template <class T>
+UnqPtr<Sequence<T>> Sequence<T>::slice(std::ptrdiff_t index, std::ptrdiff_t count) const {
+    return slice(index, count, *CreateEmpty());
+}
+
 template <class T>
 UnqPtr<Sequence<T>> Sequence<T>::slice(std::ptrdiff_t index, std::ptrdiff_t count,
-                                        const Sequence<T>* replace_seq) const {
+                                        const Sequence<T>& replace_seq) const {
     if (count < 0) throw std::invalid_argument("Slice count cannot be negative");
 
     size_t length = get_count();
@@ -87,8 +91,8 @@ UnqPtr<Sequence<T>> Sequence<T>::slice(std::ptrdiff_t index, std::ptrdiff_t coun
     size_t position = 0;
     while (iter.move_next()) {
         if (position < first) result->sys_append(iter.get_current());
-        if (position == first && replace_seq != nullptr) {
-            EnumeratorWrapper<T> replacement(replace_seq->get_enumerator());
+        if (position == first) {
+            EnumeratorWrapper<T> replacement(replace_seq.get_enumerator());
             while (replacement.move_next()) result->sys_append(replacement.get_current());
         }
         if (position >= first + removed) result->sys_append(iter.get_current());

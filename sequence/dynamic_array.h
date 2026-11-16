@@ -27,7 +27,7 @@ class DynamicArray {
 
         class Enumerator : public IEnumerator<T> {
             private:
-                const T* data;
+                const DynamicArray<T>& array;
                 size_t size;
                 size_t index;
                 bool has_current;
@@ -40,8 +40,8 @@ class DynamicArray {
                     }
                 }
             public:
-                Enumerator(const T* data, size_t size, ShrdPtr<IteratorState> state)
-                    : data(data), size(size), index(0), has_current(false), state(std::move(state)),
+                Enumerator(const DynamicArray<T>& array, size_t size, ShrdPtr<IteratorState> state)
+                    : array(array), size(size), index(0), has_current(false), state(std::move(state)),
                       expected_version(this->state->version) {}
 
                 bool move_next() override {
@@ -52,13 +52,15 @@ class DynamicArray {
                     }
                     index++;
                     has_current = true;
+
                     return true;
                 }
 
                 const T& get_current() const override {
                     check_owner();
                     if (!has_current) throw std::out_of_range("Enumerator is out of range");
-                    return data[index - 1];
+
+                    return array.get(index - 1);
                 }
 
                 void reset() override {

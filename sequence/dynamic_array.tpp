@@ -18,12 +18,16 @@ DynamicArray<T>::DynamicArray(size_t size)
 template <class T>
 DynamicArray<T>::DynamicArray(const T* items, size_t count) : DynamicArray(count) {
     if (count > 0 && items == nullptr) throw std::invalid_argument("Items cannot be nullptr");
-    for (size_t index = 0; index < count; index++) data[index] = items[index];
+    for (size_t index = 0; index < count; index++) {
+        data[index] = items[index];
+    }
 }
 
 template <class T>
 DynamicArray<T>::DynamicArray(const DynamicArray<T>& other) : DynamicArray(other.size) {
-    for (size_t index = 0; index < size; index++) data[index] = other.data[index];
+    for (size_t index = 0; index < size; index++) {
+        data[index] = other.data[index];
+    }
 }
 
 template <class T>
@@ -32,12 +36,14 @@ DynamicArray<T>& DynamicArray<T>::operator=(const DynamicArray<T>& other) {
 
     DynamicArray<T> copy(other);
     swap(copy);
+
     return *this;
 }
 
 template <class T>
 const T& DynamicArray<T>::get(size_t index) const {
     if (index >= size) throw std::out_of_range("Index out of range");
+
     return data[index];
 }
 
@@ -59,10 +65,15 @@ void DynamicArray<T>::resize(size_t new_size) {
         throw std::length_error("Size is too large");
     }
 
-    DynamicArray<T> resized(new_size);
+    auto resized = UnqPtr<T[]>::make_array(new_size);
     size_t copy_count = (new_size < size) ? new_size : size;
-    for (size_t index = 0; index < copy_count; index++) resized.data[index] = data[index];
-    swap(resized);
+    for (size_t index = 0; index < copy_count; index++) {
+        resized[index] = data[index];
+    }
+
+    data.swap(resized);
+    size = new_size;
+    iterator_state->version++;
 }
 
 template <class T>
@@ -86,5 +97,6 @@ UnqPtr<IEnumerator<T>> DynamicArray<T>::get_enumerator() const {
 template <class T>
 UnqPtr<IEnumerator<T>> DynamicArray<T>::get_enumerator(size_t count) const {
     if (count > size) throw std::out_of_range("Enumerator count out of range");
-    return UnqPtr<Enumerator>::make(data.get(), count, iterator_state);
+
+    return UnqPtr<Enumerator>::make(*this, count, iterator_state);
 }

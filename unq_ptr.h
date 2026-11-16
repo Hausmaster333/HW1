@@ -6,7 +6,17 @@
 #include <type_traits>
 #include <utility>
 
-template <class T> class ShrdPtr;
+// Владеть From через To* можно, если delete To* вызовет деструктор настоящего типа From
+template <class From, class To>
+inline constexpr bool is_owner_convertible =
+    std::is_convertible<From*, To*>::value &&
+    (std::is_same<std::remove_cv_t<From>, std::remove_cv_t<To>>::value || std::has_virtual_destructor<To>::value);
+
+// Копия через конструктор T не срежет объект, только если за T* не может прятаться наследник
+template <class T>
+inline constexpr bool is_cloneable =
+    std::is_copy_constructible<std::remove_cv_t<T>>::value &&
+    (!std::is_polymorphic<T>::value || std::is_final<T>::value);
 
 template <class T>
 class UnqPtr {
@@ -15,54 +25,39 @@ class UnqPtr {
     template <class U> friend class UnqPtr;
     template <class U> friend class ShrdPtr;
     private:
-        void* object;
         T* ptr;
-        void (*deleter)(void*);
-        bool can_clone;
 
-        // Принимает объект и способ его удаления
-        UnqPtr(void* object, T* ptr, void (*deleter)(void*)) noexcept;
+        explicit UnqPtr(T* ptr) noexcept;
+        T* release() noexcept;
     public:
-        // Создаёт пустой указатель
         UnqPtr() noexcept;
-        // Запрещает копирование владельца
+
         UnqPtr(const UnqPtr<T>& other) = delete;
-        // Запрещает копирующее присваивание
         UnqPtr<T>& operator=(const UnqPtr<T>& other) = delete;
-        // Передаёт владение и опустошает источник
+
         UnqPtr(UnqPtr<T>&& other) noexcept;
-        // Заменяет объект, забирая владение у источника
         UnqPtr<T>& operator=(UnqPtr<T>&& other) noexcept;
 
-        // Передаёт владение с преобразованием типа и запретом clone
-        template <class U, class = std::enable_if_t<std::is_convertible<U*, T*>::value>>
+        template <class U, class = std::enable_if_t<is_owner_convertible<U, T>>>
         UnqPtr(UnqPtr<U>&& other) noexcept;
 
-        // Заменяет объект с преобразованием типа и запретом clone
-        template <class U, class = std::enable_if_t<std::is_convertible<U*, T*>::value>>
+        template <class U, class = std::enable_if_t<is_owner_convertible<U, T>>>
         UnqPtr<T>& operator=(UnqPtr<U>&& other) noexcept;
 
-        // Создаёт объект с переданными аргументами
         template <class... Args>
         static UnqPtr<T> make(Args&&... args);
 
-        // Копирует объект, если тип копируемый и не был преобразован
+        template <class U = T, class = std::enable_if_t<is_cloneable<U>>>
         UnqPtr<T> clone() const;
 
-        // Возвращает адрес без передачи владения
         T* get() const noexcept;
-        // Возвращает объект, для пустого указателя бросает исключение
         T& operator*() const;
-        // Даёт доступ к членам, для пустого указателя бросает исключение
         T* operator->() const;
-        // Проверяет наличие объекта
         explicit operator bool() const noexcept;
 
-        // Удаляет объект и очищает указатель
         void reset() noexcept;
-        // Обменивает владение двух указателей
         void swap(UnqPtr<T>& other) noexcept;
-        // Освобождает принадлежащий объект
+
         ~UnqPtr();
 };
 
@@ -73,39 +68,30 @@ class UnqPtr<T[]> {
         T* data;
         size_t length;
 
-        // Принимает массив и его длину
         UnqPtr(T* data, size_t length) noexcept;
+        T* release() noexcept;
     public:
-        // Создаёт пустой указатель на массив
         UnqPtr() noexcept;
-        // Запрещает копирование владельца массива
+
         UnqPtr(const UnqPtr<T[]>& other) = delete;
-        // Запрещает копирующее присваивание
         UnqPtr<T[]>& operator=(const UnqPtr<T[]>& other) = delete;
-        // Передаёт массив и опустошает источник
+
         UnqPtr(UnqPtr<T[]>&& other) noexcept;
-        // Заменяет массив, забирая владение у источника
         UnqPtr<T[]>& operator=(UnqPtr<T[]>&& other) noexcept;
 
-        // Создаёт массив указанной длины
         static UnqPtr<T[]> make_array(size_t count);
-        // Копирует массив, если элементы допускают копирующее присваивание
+
+        template <class U = T, class = std::enable_if_t<std::is_copy_assignable<U>::value>>
         UnqPtr<T[]> clone() const;
 
-        // Возвращает адрес массива без передачи владения
         T* get() const noexcept;
-        // Возвращает элемент, при выходе за границы бросает исключение
         T& operator[](size_t index) const;
-        // Проверяет наличие массива
         explicit operator bool() const noexcept;
-        // Возвращает длину массива
-        size_t size() const noexcept;
 
-        // Удаляет массив и очищает указатель
+        size_t size() const noexcept;
         void reset() noexcept;
-        // Обменивает массивы и их длины
         void swap(UnqPtr<T[]>& other) noexcept;
-        // Освобождает принадлежащий массив
+
         ~UnqPtr();
 };
 

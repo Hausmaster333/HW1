@@ -19,13 +19,15 @@ class Sequence {
         virtual size_t get_count() const = 0;
 
         UnqPtr<Sequence<T>> get_sub_sequence(size_t start, size_t end) const;
-        UnqPtr<Sequence<T>> concat(const Sequence<T>* other) const;
+        UnqPtr<Sequence<T>> concat(const Sequence<T>& other) const;
         UnqPtr<Sequence<T>> map(T (*func)(const T& elem)) const;
         UnqPtr<Sequence<T>> where(bool (*predicate)(const T& elem)) const;
         T reduce(T (*func)(const T& accumulator, const T& current), const T& initial_elem) const;
-        UnqPtr<Sequence<T>> slice(std::ptrdiff_t index, std::ptrdiff_t count, const Sequence<T>* replace_seq = nullptr) const;
+        UnqPtr<Sequence<T>> slice(std::ptrdiff_t index, std::ptrdiff_t count) const;
+        UnqPtr<Sequence<T>> slice(std::ptrdiff_t index, std::ptrdiff_t count, const Sequence<T>& replace_seq) const;
 
         virtual UnqPtr<IEnumerator<T>> get_enumerator() const = 0;
+
         virtual ~Sequence() = default;
 };
 
@@ -51,6 +53,7 @@ class ArraySequence : public Sequence<T> {
         std::optional<T> try_get_last() const override;
         std::optional<T> try_get(size_t index) const;
         size_t get_count() const override;
+
         UnqPtr<IEnumerator<T>> get_enumerator() const override;
 };
 
@@ -75,6 +78,7 @@ class ListSequence : public Sequence<T> {
         std::optional<T> try_get_last() const override;
         std::optional<T> try_get(size_t index) const;
         size_t get_count() const override;
+
         UnqPtr<IEnumerator<T>> get_enumerator() const override;
 };
 

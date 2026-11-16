@@ -2,6 +2,7 @@
 #define HW1_LINKED_LIST_H
 
 #include "ienumerator.h"
+#include "weak_ptr.h"
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
@@ -9,15 +10,18 @@
 template <class T>
 class LinkedList {
     private:
+        struct Node;
+        using NodePtr = ShrdPtr<Node>;
+
         struct Node {
             T data;
-            UnqPtr<Node> next;
+            NodePtr next;
 
             Node(const T& item) : data(item) {}
         };
 
-        UnqPtr<Node> head;
-        Node* tail;
+        NodePtr head;
+        WeakPtr<Node> tail;
         size_t length;
         ShrdPtr<IteratorState> iterator_state;
     public:
@@ -41,8 +45,8 @@ class LinkedList {
 
         class Enumerator : public IEnumerator<T> {
             private:
-                const Node* head;
-                const Node* current;
+                NodePtr head;
+                NodePtr current;
                 bool started;
                 ShrdPtr<IteratorState> state;
                 size_t expected_version;
@@ -53,8 +57,8 @@ class LinkedList {
                     }
                 }
             public:
-                Enumerator(const Node* head, ShrdPtr<IteratorState> state)
-                    : head(head), current(nullptr), started(false), state(std::move(state)),
+                Enumerator(const NodePtr& head, ShrdPtr<IteratorState> state)
+                    : head(head), started(false), state(std::move(state)),
                       expected_version(this->state->version) {}
 
                 bool move_next() override {
@@ -62,21 +66,21 @@ class LinkedList {
                     if (!started) {
                         current = head;
                         started = true;
-                    } else if (current != nullptr) {
-                        current = current->next.get();
+                    } else if (current) {
+                        current = current->next;
                     }
-                    return current != nullptr;
+                    return static_cast<bool>(current);
                 }
 
                 const T& get_current() const override {
                     check_owner();
-                    if (current == nullptr) throw std::out_of_range("Enumerator has no current item");
+                    if (!current) throw std::out_of_range("Enumerator has no current item");
                     return current->data;
                 }
 
                 void reset() override {
                     check_owner();
-                    current = nullptr;
+                    current.reset();
                     started = false;
                 }
         };

@@ -3,8 +3,7 @@
 #include <stdexcept>
 
 template <class T>
-LinkedList<T>::LinkedList()
-    : tail(nullptr), length(0), iterator_state(ShrdPtr<IteratorState>::make()) {}
+LinkedList<T>::LinkedList() : length(0), iterator_state(ShrdPtr<IteratorState>::make()) {}
 
 template <class T>
 LinkedList<T>::LinkedList(const T* items, size_t count) : LinkedList() {
@@ -24,11 +23,7 @@ LinkedList<T>::LinkedList(const T* items, size_t count) : LinkedList() {
 template <class T>
 LinkedList<T>::LinkedList(const LinkedList<T>& other) : LinkedList() {
     try {
-        const Node* current = other.head.get();
-        while (current != nullptr) {
-            append(current->data);
-            current = current->next.get();
-        }
+        for (NodePtr current = other.head; current; current = current->next) append(current->data);
     } catch (...) {
         clear();
         throw;
@@ -60,22 +55,28 @@ LinkedList<T>& LinkedList<T>::operator=(LinkedList<T>&& other) noexcept {
 
 template <class T>
 const T& LinkedList<T>::get_first() const {
-    if (head.get() == nullptr) throw std::out_of_range("List is empty");
+    if (!head) throw std::out_of_range("List is empty");
+
     return head->data;
 }
 
 template <class T>
 const T& LinkedList<T>::get_last() const {
-    if (tail == nullptr) throw std::out_of_range("List is empty");
-    return tail->data;
+    NodePtr last = tail.lock();
+    if (!last) throw std::out_of_range("List is empty");
+
+    return last->data;
 }
 
 template <class T>
 const T& LinkedList<T>::get(size_t index) const {
     if (index >= length) throw std::out_of_range("Index out of range");
 
-    const Node* current = head.get();
-    for (size_t position = 0; position < index; position++) current = current->next.get();
+    NodePtr current = head;
+    for (size_t position = 0; position < index; position++) {
+        current = current->next;
+    }
+
     return current->data;
 }
 
@@ -86,24 +87,22 @@ size_t LinkedList<T>::get_length() const {
 
 template <class T>
 void LinkedList<T>::append(const T& item) {
-    auto new_node = UnqPtr<Node>::make(item);
-    Node* new_tail = new_node.get();
+    NodePtr new_node = NodePtr::make(item);
+    NodePtr last = tail.lock();
+    tail = new_node;
+    if (!last) head = std::move(new_node);
+    else last->next = std::move(new_node);
 
-    if (head.get() == nullptr) head = std::move(new_node);
-    else tail->next = std::move(new_node);
-
-    tail = new_tail;
     length++;
     iterator_state->version++;
 }
 
 template <class T>
 void LinkedList<T>::prepend(const T& item) {
-    auto new_node = UnqPtr<Node>::make(item);
-    Node* new_tail = new_node.get();
+    NodePtr new_node = NodePtr::make(item);
+    if (!head) tail = new_node;
     new_node->next = std::move(head);
     head = std::move(new_node);
-    if (tail == nullptr) tail = new_tail;
     length++;
     iterator_state->version++;
 }
@@ -114,10 +113,10 @@ void LinkedList<T>::insert_at(const T& item, size_t index) {
     if (index == 0) { prepend(item); return; }
     if (index == length) { append(item); return; }
 
-    Node* previous = head.get();
-    for (size_t position = 1; position < index; position++) previous = previous->next.get();
+    NodePtr previous = head;
+    for (size_t position = 1; position < index; position++) previous = previous->next;
 
-    auto new_node = UnqPtr<Node>::make(item);
+    NodePtr new_node = NodePtr::make(item);
     new_node->next = std::move(previous->next);
     previous->next = std::move(new_node);
     length++;
@@ -127,12 +126,12 @@ void LinkedList<T>::insert_at(const T& item, size_t index) {
 template <class T>
 void LinkedList<T>::clear() noexcept {
     iterator_state->version++;
-    // Перед уничтожением узла забираем next: длинный список не удаляется рекурсивно.
+
     while (head) {
         auto current = std::move(head);
         head = std::move(current->next);
     }
-    tail = nullptr;
+    tail.reset();
     length = 0;
 }
 
@@ -141,13 +140,13 @@ void LinkedList<T>::swap(LinkedList<T>& other) noexcept {
     iterator_state->version++;
     other.iterator_state->version++;
     head.swap(other.head);
-    std::swap(tail, other.tail);
+    tail.swap(other.tail);
     std::swap(length, other.length);
 }
 
 template <class T>
 UnqPtr<IEnumerator<T>> LinkedList<T>::get_enumerator() const {
-    return UnqPtr<Enumerator>::make(head.get(), iterator_state);
+    return UnqPtr<Enumerator>::make(head, iterator_state);
 }
 
 template <class T>

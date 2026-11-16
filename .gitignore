@@ -3,5 +3,5 @@ ptr_tests
 sequence_tests
 benchmark
 benchmarks/results/
-build/valgrind/
+build/
 DESIGN.md
