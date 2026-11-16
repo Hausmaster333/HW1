@@ -5,3 +5,4 @@ benchmark
 benchmarks/results/
 build/
 DESIGN.md
+IMPLEMENTATION.md

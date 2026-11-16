@@ -78,7 +78,7 @@ def median_rows(samples, sizes):
                 for phase in phases:
                     entry[phase] = statistics.median(row["phases"][phase] for row in group)
                 entry["total"] = sum(entry[phase] for phase in phases)
-                for key in ("pointer_bytes", "heap_bytes", "allocations", "rss_bytes"):
+                for key in ("pointer_bytes", "rss_bytes"):
                     entry[key] = int(statistics.median(row[key] for row in group))
                 summary.append(entry)
     return summary
@@ -228,28 +228,21 @@ def plot_overhead(summary, sizes):
 
 
 def plot_memory(summary, sizes):
-    """memory.png: байт на элемент — запрошено у new (слева) и реально занято (справа)."""
+    """memory.png: сколько памяти процесса занимает один элемент."""
     largest = sizes[-1]
-    figure, axes = plt.subplots(1, 2, figsize=(16, 5.5))
+    figure, axis = plt.subplots(figsize=(9, 5.5))
     width = 0.27
     positions = range(len(SCENARIOS))
     for offset, variant in enumerate(VARIANTS):
-        exact = []
-        measured = []
-        for scenario in SCENARIOS:
-            row = find(summary, scenario, variant, largest)
-            exact.append(row["pointer_bytes"] + row["heap_bytes"] / largest)
-            measured.append(row["rss_bytes"] / largest)
+        measured = [find(summary, scenario, variant, largest)["rss_bytes"] / largest
+                    for scenario in SCENARIOS]
         shifted = [position + (offset - 1) * width for position in positions]
-        for axis, values in ((axes[0], exact), (axes[1], measured)):
-            bars = axis.bar(shifted, values, width, color=COLORS[variant], label=LABELS[variant])
-            axis.bar_label(bars, fmt="%.0f", fontsize=8)
-    axes[0].set_title("Запрошено памяти: указатель + куча, байт на элемент")
-    axes[1].set_title(f"Прирост рабочего набора процесса при N = {largest:,}, байт на элемент")
-    for axis in axes:
-        axis.set_xticks(list(positions), list(SCENARIOS))
-        axis.grid(True, axis="y", alpha=0.3)
-        axis.legend(fontsize=9)
+        bars = axis.bar(shifted, measured, width, color=COLORS[variant], label=LABELS[variant])
+        axis.bar_label(bars, fmt="%.0f", fontsize=8)
+    axis.set_title(f"Прирост рабочего набора процесса при N = {largest:,}, байт на элемент")
+    axis.set_xticks(list(positions), list(SCENARIOS))
+    axis.grid(True, axis="y", alpha=0.3)
+    axis.legend(fontsize=9)
     figure.tight_layout()
     figure.savefig(OUTPUT / "memory.png", dpi=110)
     plt.close(figure)
@@ -280,18 +273,15 @@ def write_report(summary, sizes, meta, caches):
         "![Отношение к raw](overhead.png)", "",
         "![Память](memory.png)", "",
         "## Память на элемент", "",
-        "Указатель — `sizeof`, куча — байты, запрошенные у `operator new` (точно, по "
-        "счётчику выделений), RSS — фактический прирост рабочего набора с учётом служебных "
-        f"данных аллокатора, N = {largest:,}.", "",
-        "| Сценарий | Вариант | Указатель, Б | Куча, Б/эл | Выделений/эл | RSS, Б/эл |",
-        "|---|---|---:|---:|---:|---:|",
+        "Указатель — `sizeof`, RSS — фактический прирост рабочего набора процесса с учётом "
+        f"служебных данных аллокатора, N = {largest:,}.", "",
+        "| Сценарий | Вариант | Указатель, Б | RSS, Б/эл |",
+        "|---|---|---:|---:|",
     ]
     for scenario in SCENARIOS:
         for variant in VARIANTS:
             row = find(summary, scenario, variant, largest)
             lines.append(f"| {scenario} | {variant} | {row['pointer_bytes']} | "
-                         f"{row['heap_bytes'] / largest:.1f} | "
-                         f"{row['allocations'] / largest:.2f} | "
                          f"{row['rss_bytes'] / largest:.1f} |")
     lines.append("")
 
@@ -353,7 +343,7 @@ def main():
     # 2. Медианы, 3. графики и отчёт
     summary = median_rows(samples, sizes)
     fields = ["scenario", "variant", "count", "runs", "create", "access", "release", "move",
-              "total", "pointer_bytes", "heap_bytes", "allocations", "rss_bytes"]
+              "total", "pointer_bytes", "rss_bytes"]
     with (OUTPUT / "summary.csv").open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()

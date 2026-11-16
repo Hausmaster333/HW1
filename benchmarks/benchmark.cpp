@@ -12,7 +12,6 @@
 
 #include "unq_ptr.h"
 #include "shrd_ptr.h"
-#include "support/alloc_counter.h"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -271,8 +270,6 @@ struct Phase {
 struct Measurement {
     std::vector<Phase> phases;
     size_t pointer_bytes = 0;
-    size_t heap_bytes = 0;
-    size_t allocations = 0;
     size_t rss_bytes = 0;
     unsigned long long checksum = 0;
 };
@@ -303,11 +300,7 @@ class Stopwatch {
 };
 
 // Снимок памяти сразу после создания всех N элементов (только в первом повторе)
-void record_memory(Measurement& result, const AllocSnapshot& heap_before,
-                   size_t rss_before) {
-    auto heap_after = alloc_snapshot();
-    result.heap_bytes = heap_after.bytes - heap_before.bytes;
-    result.allocations = heap_after.allocations - heap_before.allocations;
+void record_memory(Measurement& result, size_t rss_before) {
     size_t rss = process_rss();
     result.rss_bytes = rss > rss_before ? rss - rss_before : 0;
 }
@@ -326,11 +319,10 @@ Measurement measure_owners(size_t count, size_t repeats, double overhead) {
     std::vector<Pointer> items;
     items.reserve(count);
     for (size_t repeat = 0; repeat < repeats; repeat++) {
-        auto heap_before = alloc_snapshot();
         watch.begin();
         for (size_t index = 0; index < count; index++) items.push_back(policy.create(index));
         watch.end(result.phases[0]);
-        if (repeat == 0) record_memory(result, heap_before, rss_before);
+        if (repeat == 0) record_memory(result, rss_before);
 
         unsigned long long sum = 0;
         watch.begin();
@@ -364,12 +356,11 @@ Measurement measure_move(size_t count, size_t repeats, double overhead) {
     for (size_t repeat = 0; repeat < repeats; repeat++) {
         for (size_t index = 0; index < count; index++) source.push_back(policy.create(index));
 
-        auto heap_before = alloc_snapshot();
         size_t rss_before = process_rss();
         watch.begin();
         for (Pointer& item : source) target.push_back(Policy::take(item));
         watch.end(result.phases[0]);
-        if (repeat == 0) record_memory(result, heap_before, rss_before);
+        if (repeat == 0) record_memory(result, rss_before);
 
         unsigned long long sum = 0;
         for (const Pointer& item : target) sum += Policy::read(item);
@@ -393,11 +384,10 @@ Measurement measure_list(size_t count, size_t repeats, double overhead) {
     size_t rss_before = process_rss();
     for (size_t repeat = 0; repeat < repeats; repeat++) {
         List list;
-        auto heap_before = alloc_snapshot();
         watch.begin();
         for (size_t index = 0; index < count; index++) list.push_back(static_cast<int>(index));
         watch.end(result.phases[0]);
-        if (repeat == 0) record_memory(result, heap_before, rss_before);
+        if (repeat == 0) record_memory(result, rss_before);
 
         watch.begin();
         unsigned long long sum = list.sum();
@@ -458,8 +448,7 @@ void print_json(const std::string& scenario, const std::string& variant, size_t 
         std::printf("%s\"%s\": %.4f", index == 0 ? "" : ", ", result.phases[index].name,
                     result.phases[index].total_ns / items);
     }
-    std::printf("}, \"pointer_bytes\": %zu, \"heap_bytes\": %zu, \"allocations\": %zu, ",
-                result.pointer_bytes, result.heap_bytes, result.allocations);
+    std::printf("}, \"pointer_bytes\": %zu, ", result.pointer_bytes);
     std::printf("\"rss_bytes\": %zu, \"checksum\": %llu, ", result.rss_bytes, result.checksum);
     std::printf("\"caches\": {\"L2\": %zu, \"L3\": %zu}}\n", caches.l2, caches.l3);
 }
