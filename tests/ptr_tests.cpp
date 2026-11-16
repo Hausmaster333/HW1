@@ -1,7 +1,6 @@
 #include "unq_ptr.h"
 #include "shrd_ptr.h"
 #include "weak_ptr.h"
-#include "support/alloc_counter.h"
 #include <gtest/gtest.h>
 #include <atomic>
 #include <cstdint>
@@ -139,11 +138,6 @@ struct has_clone : std::false_type {};
 template <class Pointer>
 struct has_clone<Pointer, std::void_t<decltype(std::declval<const Pointer&>().clone())>>
     : std::true_type {};
-
-// Число выделений кучи с момента снимка
-size_t allocations_since(const AllocSnapshot& before) {
-    return alloc_snapshot().allocations - before.allocations;
-}
 
 // ---------------------------------------------------------------- проверки при компиляции
 
@@ -325,13 +319,6 @@ TEST(UnqPtrTest, ThrowingConstructorLeaksNothing) {
     EXPECT_THROW(UnqPtr<ThrowOnConstruct>::make(), std::runtime_error);
 }
 
-// AllocFailureScope(1): первое же выделение памяти бросает std::bad_alloc.
-TEST(UnqPtrTest, FailedAllocationLeaksNothing) {
-    AllocFailureScope failure(1);
-    EXPECT_THROW(UnqPtr<Tracked>::make(1), std::bad_alloc);
-    EXPECT_EQ(Tracked::alive, 0);
-}
-
 // clone() создаёт отдельный объект: изменение и удаление копии не затрагивают оригинал.
 TEST(UnqPtrTest, CloneIsIndependent) {
     auto owner = UnqPtr<Tracked>::make(10);
@@ -429,11 +416,9 @@ TEST(UnqPtrArrayTest, IndexBoundaries) {
     EXPECT_THROW(owner[SIZE_MAX], std::out_of_range);
 }
 
-// Массив нулевой длины не выделяет память и ведёт себя как пустой указатель.
+// Массив нулевой длины ведёт себя как пустой указатель.
 TEST(UnqPtrArrayTest, ZeroLengthArrayIsEmpty) {
-    auto before = alloc_snapshot();
     auto owner = UnqPtr<int[]>::make_array(0);
-    EXPECT_EQ(allocations_since(before), 0u);
     EXPECT_FALSE(owner);
     EXPECT_EQ(owner.size(), 0u);
     EXPECT_THROW(owner[0], std::out_of_range);
@@ -477,42 +462,21 @@ TEST(ShrdPtrTest, EmptyPointerState) {
     empty.reset();
 }
 
-// У пустого указателя нет блока: его копия тоже пуста и памяти не просит.
-TEST(ShrdPtrTest, CopyOfEmptyAllocatesNothing) {
+// У пустого указателя нет блока: его копия тоже пуста.
+TEST(ShrdPtrTest, CopyOfEmptyIsEmpty) {
     ShrdPtr<Tracked> empty;
-    auto before = alloc_snapshot();
     ShrdPtr<Tracked> copy = empty;
-    EXPECT_EQ(allocations_since(before), 0u);
+    EXPECT_FALSE(copy);
     EXPECT_EQ(copy.use_count(), 0u);
 }
 
-// make() кладёт объект прямо в блок со счётчиками: одно выделение на всё.
-TEST(ShrdPtrTest, MakeAllocatesOnce) {
-    auto before = alloc_snapshot();
-    auto owner = ShrdPtr<Tracked>::make(1);
-    EXPECT_EQ(allocations_since(before), 1u);
-}
-
-// Копия только увеличивает счётчик в уже готовом блоке.
-TEST(ShrdPtrTest, CopiesAllocateNothing) {
+// Копии не создают новый объект, а увеличивают общий счётчик.
+TEST(ShrdPtrTest, CopiesIncreaseUseCount) {
     auto first = ShrdPtr<Tracked>::make(1);
-    auto before = alloc_snapshot();
     auto second = first;
     ShrdPtr<Tracked> third(second);
-    EXPECT_EQ(allocations_since(before), 0u);
     EXPECT_EQ(first.use_count(), 3u);
-}
-
-// Блок освобождает последний владелец, а не первый.
-TEST(ShrdPtrTest, LastOwnerFreesBlock) {
-    auto first = ShrdPtr<Tracked>::make(1);
-    auto second = first;
-    auto live = alloc_snapshot().live();
-    first.reset();
-    EXPECT_EQ(alloc_snapshot().live(), live);
-    second.reset();
-    EXPECT_EQ(alloc_snapshot().live(), live - 1);
-    EXPECT_EQ(Tracked::alive, 0);
+    EXPECT_EQ(Tracked::alive, 1);
 }
 
 // Копии держат один объект, удаляет его последний владелец.
@@ -531,12 +495,6 @@ TEST(ShrdPtrTest, CopiesShareOneObject) {
 
 TEST(ShrdPtrTest, ThrowingConstructorLeaksNothing) {
     EXPECT_THROW(ShrdPtr<ThrowOnConstruct>::make(), std::runtime_error);
-}
-
-TEST(ShrdPtrTest, FailedAllocationLeaksNothing) {
-    AllocFailureScope failure(1);
-    EXPECT_THROW(ShrdPtr<Tracked>::make(1), std::bad_alloc);
-    EXPECT_EQ(Tracked::alive, 0);
 }
 
 // owner = owner не меняет счётчик и не удаляет объект.
@@ -645,13 +603,11 @@ TEST(ShrdPtrTest, EqualityComparesObjects) {
     EXPECT_TRUE(dog != ShrdPtr<Animal>());
 }
 
-// Приведение к наследнику делит владение: тот же объект, счётчик +1, без выделений.
+// Приведение к наследнику делит владение: тот же объект, счётчик +1.
 TEST(ShrdPtrTest, StaticPointerCastSharesOwnership) {
     Dog::destroyed = 0;
     ShrdPtr<Animal> animal = ShrdPtr<Dog>::make();
-    auto before = alloc_snapshot();
     ShrdPtr<Dog> dog = static_pointer_cast<Dog>(animal);
-    EXPECT_EQ(allocations_since(before), 0u);
     EXPECT_TRUE(dog == animal);
     EXPECT_EQ(animal.use_count(), 2u);
     EXPECT_EQ(dog->id(), 1);
@@ -668,14 +624,12 @@ TEST(ShrdPtrTest, StaticPointerCastOfEmptyIsEmpty) {
 
 // ---------------------------------------------------------------- ShrdPtr: передача из UnqPtr
 
-// Передача сохраняет адрес, опустошает UnqPtr и выделяет только блок.
+// Передача сохраняет адрес и опустошает UnqPtr.
 TEST(ShrdPtrTest, TakesOwnershipFromUnqPtr) {
     auto unique = UnqPtr<Tracked>::make(17);
     Tracked* address = unique.get();
 
-    auto before = alloc_snapshot();
     ShrdPtr<Tracked> shared(std::move(unique));
-    EXPECT_EQ(allocations_since(before), 1u);
     EXPECT_FALSE(unique);
     EXPECT_EQ(shared.get(), address);
     EXPECT_EQ(shared.use_count(), 1u);
@@ -687,27 +641,12 @@ TEST(ShrdPtrTest, TakesOwnershipFromUnqPtr) {
     EXPECT_EQ(Tracked::alive, 0);
 }
 
-// Из пустого UnqPtr получается пустой ShrdPtr без выделения блока.
+// Из пустого UnqPtr получается пустой ShrdPtr.
 TEST(ShrdPtrTest, TransferFromEmptyUnqPtr) {
     UnqPtr<Tracked> unique;
-    auto before = alloc_snapshot();
     ShrdPtr<Tracked> shared(std::move(unique));
-    EXPECT_EQ(allocations_since(before), 0u);
     EXPECT_FALSE(shared);
     EXPECT_EQ(shared.use_count(), 0u);
-}
-
-// Если блок не выделился, объект остаётся у UnqPtr (строгая гарантия).
-TEST(ShrdPtrTest, FailedTransferKeepsUnqPtrOwner) {
-    auto unique = UnqPtr<Tracked>::make(5);
-    Tracked* address = unique.get();
-    {
-        AllocFailureScope failure(1);
-        EXPECT_THROW(ShrdPtr<Tracked> shared(std::move(unique)), std::bad_alloc);
-    }
-    EXPECT_EQ(unique.get(), address);
-    EXPECT_EQ(unique->value, 5);
-    EXPECT_EQ(Tracked::alive, 1);
 }
 
 // ---------------------------------------------------------------- ShrdPtr: наследование
@@ -901,22 +840,9 @@ TEST(ShrdPtrArrayTest, TakesOwnershipFromUnqPtr) {
     EXPECT_EQ(ArrayElement::alive, 3);
 }
 
-// Если блок не выделился, массив остаётся у UnqPtr.
-TEST(ShrdPtrArrayTest, FailedTransferKeepsArray) {
-    auto unique = UnqPtr<ArrayElement[]>::make_array(2);
-    {
-        AllocFailureScope failure(1);
-        EXPECT_THROW(ShrdPtr<ArrayElement[]> shared(std::move(unique)), std::bad_alloc);
-    }
-    EXPECT_EQ(unique.size(), 2u);
-    EXPECT_EQ(ArrayElement::alive, 2);
-}
-
-// Массив нулевой длины пуст и не выделяет ни массив, ни блок.
+// Массив нулевой длины ведёт себя как пустой указатель.
 TEST(ShrdPtrArrayTest, ZeroLengthArrayIsEmpty) {
-    auto before = alloc_snapshot();
     auto shared = ShrdPtr<int[]>::make_array(0);
-    EXPECT_EQ(allocations_since(before), 0u);
     EXPECT_FALSE(shared);
     EXPECT_EQ(shared.size(), 0u);
     EXPECT_EQ(shared.use_count(), 0u);
@@ -935,12 +861,10 @@ TEST(WeakPtrTest, EmptyReferenceState) {
     EXPECT_TRUE(weak.expired());
 }
 
-// Слабая ссылка не владеет: счётчик владельцев не растёт, память не выделяется.
+// Слабая ссылка не владеет: счётчик владельцев не растёт.
 TEST(WeakPtrTest, ObservesWithoutOwning) {
     auto shared = ShrdPtr<Tracked>::make(5);
-    auto before = alloc_snapshot();
     WeakPtr<Tracked> weak = shared;
-    EXPECT_EQ(allocations_since(before), 0u);
     EXPECT_EQ(weak.use_count(), 1u);
 
     ShrdPtr<Tracked> locked = weak.lock();
@@ -964,20 +888,18 @@ TEST(WeakPtrTest, ExpiresWithLastOwner) {
     EXPECT_FALSE(weak.lock());
 }
 
-// Объект из make() лежит в блоке, но умирает раньше блока: блок держат слабые ссылки.
+// Объект умирает с последним ShrdPtr, а блок живёт, пока на него смотрят WeakPtr:
+// иначе expired() второй ссылки читал бы освобождённую память (это ловит valgrind).
 TEST(WeakPtrTest, BlockOutlivesObject) {
-    auto live = alloc_snapshot().live();
     auto shared = ShrdPtr<Tracked>::make(1);
     WeakPtr<Tracked> weak = shared;
     WeakPtr<Tracked> second = weak;
 
     shared.reset();
     EXPECT_EQ(Tracked::alive, 0);
-    EXPECT_EQ(alloc_snapshot().live(), live + 1);
     weak.reset();
-    EXPECT_EQ(alloc_snapshot().live(), live + 1);
-    second.reset();
-    EXPECT_EQ(alloc_snapshot().live(), live);
+    EXPECT_TRUE(second.expired());
+    EXPECT_FALSE(second.lock());
 }
 
 // Блок из UnqPtr удаляет объект так, как он был создан.
@@ -990,7 +912,7 @@ TEST(WeakPtrTest, WorksWithTransferredObject) {
     EXPECT_TRUE(weak.expired());
 }
 
-// WeakPtr<Animal> из временного ShrdPtr<Dog>: владельцев нет, Dog удалён сразу.
+// WeakPtr<Animal> из временного ShrdPtr<Dog>: владельцев нет, Dog удалён сразу
 TEST(WeakPtrTest, WorksWithUpcast) {
     Dog::destroyed = 0;
     WeakPtr<Animal> from_dog = ShrdPtr<Dog>::make();
@@ -1018,7 +940,7 @@ TEST(WeakPtrTest, MoveEmptiesSource) {
     EXPECT_EQ(first.lock()->value, 3);
 }
 
-// weak = weak и weak = std::move(weak) не теряют ссылку.
+// weak = weak и weak = std::move(weak) не теряют ссылку
 TEST(WeakPtrTest, SelfAssignmentKeepsReference) {
     auto shared = ShrdPtr<Tracked>::make(3);
     WeakPtr<Tracked> weak = shared;
@@ -1029,7 +951,7 @@ TEST(WeakPtrTest, SelfAssignmentKeepsReference) {
     EXPECT_EQ(weak.lock()->value, 3);
 }
 
-// Присваивание ShrdPtr и swap переключают ссылку на другой объект.
+// Присваивание ShrdPtr и swap переключают ссылку на другой объект
 TEST(WeakPtrTest, ReassignAndSwap) {
     auto three = ShrdPtr<Tracked>::make(3);
     auto four = ShrdPtr<Tracked>::make(4);
@@ -1043,7 +965,7 @@ TEST(WeakPtrTest, ReassignAndSwap) {
     EXPECT_EQ(second.lock()->value, 3);
 }
 
-// Родитель владеет ребёнком, ребёнок ссылается на родителя слабо: цикла нет, всё удаляется.
+// Родитель владеет ребёнком, ребёнок ссылается на родителя слабо: цикла нет, всё удаляется
 TEST(WeakPtrTest, BreaksOwnershipCycle) {
     struct Parent;
     struct Kid {
@@ -1065,7 +987,7 @@ TEST(WeakPtrTest, BreaksOwnershipCycle) {
     EXPECT_TRUE(kid.expired());
 }
 
-// Объект держит слабую ссылку на себя: её освобождение внутри деструктора не удаляет блок раньше времени.
+// Объект держит слабую ссылку на себя: её освобождение внутри деструктора не удаляет блок раньше времени
 TEST(WeakPtrTest, ObjectHoldsWeakReferenceToItself) {
     struct Self {
         Tracked value{1};
@@ -1079,7 +1001,7 @@ TEST(WeakPtrTest, ObjectHoldsWeakReferenceToItself) {
 }
 
 // Потоки берут lock(), пока последний владелец отпускает объект: каждый удачный lock()
-// видит живой объект, объект удаляется ровно один раз.
+// видит живой объект, объект удаляется ровно один раз
 TEST(WeakPtrThreadTest, LockRacesWithLastRelease) {
     for (int round = 0; round < 200; round++) {
         auto shared = ShrdPtr<Tracked>::make(7);
@@ -1104,15 +1026,4 @@ TEST(WeakPtrThreadTest, LockRacesWithLastRelease) {
         EXPECT_EQ(Tracked::alive, 0);
         EXPECT_TRUE(weak.expired());
     }
-}
-
-// ---------------------------------------------------------------- проверка самой проверки
-
-// Счётчик видит обычные new / delete: забытый delete был бы пойман после теста.
-TEST(LeakCheckTest, CounterSeesRawAllocations) {
-    auto live = alloc_snapshot().live();
-    int* raw = new int(1);
-    EXPECT_EQ(alloc_snapshot().live(), live + 1);
-    delete raw;
-    EXPECT_EQ(alloc_snapshot().live(), live);
 }

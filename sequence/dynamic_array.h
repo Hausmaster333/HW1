@@ -23,7 +23,6 @@ class DynamicArray {
         void set(size_t index, const T& value);
         void resize(size_t new_size);
         void swap(DynamicArray<T>& other) noexcept;
-        ~DynamicArray();
 
         class Enumerator : public IEnumerator<T> {
             private:
@@ -72,6 +71,8 @@ class DynamicArray {
 
         UnqPtr<IEnumerator<T>> get_enumerator() const;
         UnqPtr<IEnumerator<T>> get_enumerator(size_t count) const;
+
+        ~DynamicArray();
 };
 
 #include "dynamic_array.tpp"

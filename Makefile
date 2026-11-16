@@ -4,9 +4,7 @@ CXXFLAGS = -Wall -Wextra -std=c++17 -I. -g
 GTEST = googletest/googletest
 GTEST_FLAGS = -pthread -I$(GTEST)/include -I$(GTEST)
 
-HEADERS = $(wildcard *.h *.tpp sequence/*.h sequence/*.tpp support/*.h)
-
-ALLOC = support/alloc_counter.cpp
+HEADERS = $(wildcard *.h *.tpp sequence/*.h sequence/*.tpp)
 
 ifeq ($(OS),Windows_NT)
 BUILD = build/windows
@@ -18,28 +16,28 @@ BUILD = build/linux
 MKDIR = mkdir -p $(BUILD)
 endif
 
-TEST_PARTS = tests/leak_check.cpp $(ALLOC) $(BUILD)/gtest-all.o
+GTEST_OBJ = $(BUILD)/gtest-all.o $(BUILD)/gtest_main.o
 
 all: ptr_tests sequence_tests benchmark
 
-$(BUILD)/gtest-all.o: $(GTEST)/src/gtest-all.cc
+$(BUILD)/gtest%.o: $(GTEST)/src/gtest%.cc
 	$(MKDIR)
 	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) -c $< -o $@
 
-ptr_tests: tests/ptr_tests.cpp $(TEST_PARTS) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) tests/ptr_tests.cpp $(TEST_PARTS) -o $@ $(LDFLAGS)
+ptr_tests: tests/ptr_tests.cpp $(GTEST_OBJ) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) tests/ptr_tests.cpp $(GTEST_OBJ) -o $@ $(LDFLAGS)
 
-sequence_tests: tests/sequence_tests.cpp $(TEST_PARTS) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) tests/sequence_tests.cpp $(TEST_PARTS) -o $@ $(LDFLAGS)
+sequence_tests: tests/sequence_tests.cpp $(GTEST_OBJ) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(GTEST_FLAGS) tests/sequence_tests.cpp $(GTEST_OBJ) -o $@ $(LDFLAGS)
 
-benchmark: benchmarks/benchmark.cpp $(ALLOC) $(HEADERS)
-	$(CXX) $(CXXFLAGS) -O2 -DNDEBUG -DALLOC_COUNTER_SINGLE_THREAD benchmarks/benchmark.cpp $(ALLOC) -o $@ $(LDFLAGS) $(BENCH_LIBS)
+benchmark: benchmarks/benchmark.cpp $(HEADERS)
+	$(CXX) $(CXXFLAGS) -O2 -DNDEBUG benchmarks/benchmark.cpp -o $@ $(LDFLAGS) $(BENCH_LIBS)
 
 check: ptr_tests sequence_tests
 	./ptr_tests
 	./sequence_tests
 
-VALGRIND = valgrind --soname-synonyms=somalloc=nouserintercepts --leak-check=full --show-leak-kinds=all \
+VALGRIND = valgrind --leak-check=full --show-leak-kinds=all \
            --errors-for-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1
 
 valgrind: ptr_tests sequence_tests

@@ -91,7 +91,7 @@ class SequenceCRTP : public Base<T> {
     public:
         using Base<T>::Base;
 
-        // Для Mutable возвращаем ссылку, для Immutable — владеющую копию.
+        // Для Mutable возвращаем ссылку, для Immutable — владеющую копию
         decltype(auto) append(const T& item) {
             if constexpr (Mutable) {
                 this->sys_append(item);
